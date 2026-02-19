@@ -1,26 +1,32 @@
-import { SCENE, PLAYER as PLAYER_CONFIG, RESPECT, ENEMY_TYPE } from '../config/constants.js';
+import {
+  SCENE,
+  PLAYER as PLAYER_CFG,
+  RESPECT,
+  COMBAT,
+  ENEMY_TYPE,
+} from '../config/constants.js';
 import Player from '../entities/Player.js';
-import Enemy from '../entities/Enemy.js';
+import Enemy  from '../entities/Enemy.js';
 import RespectMeter from '../systems/RespectMeter.js';
-import ParrySystem from '../systems/ParrySystem.js';
+import ParrySystem  from '../systems/ParrySystem.js';
 
-// Wave definitions — deterministic, index = wave number (0-based)
-// Positions are world-x so the player has to move forward.
+// ─── Wave definitions ─────────────────────────────────────────────────────────
+// Fully deterministic: index = wave number (0-based), loops last wave when exhausted.
 const WAVES = [
-  // Wave 1
+  // Wave 1 — 3 goons, spread out
   [
     { x: 400, yFrac: 0.62, type: ENEMY_TYPE.TRACKSUIT_GOON },
     { x: 550, yFrac: 0.65, type: ENEMY_TYPE.TRACKSUIT_GOON },
     { x: 700, yFrac: 0.60, type: ENEMY_TYPE.TRACKSUIT_GOON },
   ],
-  // Wave 2
+  // Wave 2 — 4 goons, tighter
   [
     { x: 350, yFrac: 0.60, type: ENEMY_TYPE.TRACKSUIT_GOON },
     { x: 500, yFrac: 0.65, type: ENEMY_TYPE.TRACKSUIT_GOON },
     { x: 650, yFrac: 0.62, type: ENEMY_TYPE.TRACKSUIT_GOON },
     { x: 800, yFrac: 0.61, type: ENEMY_TYPE.TRACKSUIT_GOON },
   ],
-  // Wave 3
+  // Wave 3 — 4 goons + 1 enforcer
   [
     { x: 300, yFrac: 0.62, type: ENEMY_TYPE.TRACKSUIT_GOON },
     { x: 500, yFrac: 0.60, type: ENEMY_TYPE.TRACKSUIT_GOON },
@@ -38,57 +44,65 @@ export default class GameScene extends Phaser.Scene {
   create() {
     const { width, height } = this.scale;
 
-    // --- World ---
+    // ── World ──────────────────────────────────────────────────────────────────
     this._buildStreet(width, height);
 
-    // --- Systems ---
+    // ── Systems ────────────────────────────────────────────────────────────────
     this.respectMeter = new RespectMeter(this, RESPECT.START);
-    this.parrySystem = new ParrySystem(this, PLAYER_CONFIG.PARRY_WINDOW_MS, PLAYER_CONFIG.PARRY_COOLDOWN_MS);
+    this.parrySystem  = new ParrySystem(this, PLAYER_CFG.PARRY_WINDOW_MS, PLAYER_CFG.PARRY_COOLDOWN_MS);
 
-    // --- Player ---
+    // ── Player ─────────────────────────────────────────────────────────────────
     this.player = new Player(this, 160, height * 0.62, this.respectMeter, this.parrySystem);
 
-    // --- Enemy tracking ---
-    // Plain array of Enemy instances; separate Phaser group for hurtbox overlap.
+    // ── Enemies ────────────────────────────────────────────────────────────────
     this._enemies = [];
+    // Phaser group so physics.add.overlap can check against a dynamic set
     this._hurtboxGroup = this.add.group();
 
-    // --- Physics overlap: player hitbox vs all enemy hurtboxes ---
+    // The callback Enemy calls at its hit frame — all resolution happens here
+    this._onEnemyAttack = (enemy) => {
+      if (!enemy.isDead && !this.player.isDead) {
+        this._resolveHit(enemy, this.player, { damage: enemy.damage });
+      }
+    };
+
+    // ── Physics: player hitbox → enemy hurtboxes ───────────────────────────────
+    // Overlap fires every frame the hitbox touches a hurtbox.
+    // The early-out guard (isAttacking + damage > 0) makes it a discrete single hit:
+    // the hitbox is only enabled for 120ms per swing (see Player._beginAttack).
     this.physics.add.overlap(
       this.player.hitbox,
       this._hurtboxGroup,
       (_playerHitbox, enemyHurtbox) => {
         if (!this.player.isAttacking || this.player.currentAttackDamage <= 0) return;
         const enemy = enemyHurtbox.getData('owner');
-        if (enemy && !enemy.isDead) {
-          enemy.takeDamage(this.player.currentAttackDamage, this.player, this.respectMeter);
+        if (enemy) {
+          this._resolveHit(this.player, enemy, { damage: this.player.currentAttackDamage });
         }
-      }
+      },
     );
 
-    // --- Input: grab key for environmental kill ---
+    // ── Grab key for environmental kill ────────────────────────────────────────
     this._grabKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.V);
 
-    // --- Waves ---
+    // ── Waves ──────────────────────────────────────────────────────────────────
     this._waveIndex = 0;
     this._waveDelay = false;
     this._spawnWave(this._waveIndex);
 
-    // --- Camera ---
+    // ── Camera ─────────────────────────────────────────────────────────────────
     this.cameras.main.setBounds(0, 0, width * 2, height);
     this.cameras.main.startFollow(this.player.sprite, true, 0.1, 0.1);
 
-    // Emit initial UI values
+    // Sync UI to initial values
     this.events.emit('respectChanged', this.respectMeter.value);
-    this.events.emit('healthChanged', PLAYER_CONFIG.HEALTH);
+    this.events.emit('healthChanged', PLAYER_CFG.HEALTH);
   }
 
   update(time, delta) {
     this.player.update(time, delta);
     this.parrySystem.update(time);
-
-    this._enemies.forEach((enemy) => enemy.update(time, delta, this.player));
-
+    this._enemies.forEach((e) => e.update(time, delta, this.player));
     this._checkOvenKill();
     this._checkWaveAdvance();
 
@@ -97,10 +111,61 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  // ─── Combat resolver ──────────────────────────────────────────────────────────
+  /**
+   * Single entry point for ALL hit resolution.
+   * Called by: physics overlap (player→enemy), enemy attack callback (enemy→player),
+   *            and the oven kill (player→enemy with isEnvKill).
+   *
+   * @param {Player|Enemy} attacker
+   * @param {Player|Enemy} target
+   * @param {{ damage: number, isEnvKill?: boolean }} meta
+   */
+  _resolveHit(attacker, target, meta) {
+    const { damage, isEnvKill = false } = meta;
+    const now = this.time.now;
+
+    if (target === this.player) {
+      // ── Enemy → Player ────────────────────────────────────────────────────────
+      if (target.isInvulnerable) return;
+
+      // Parry check — must happen before any state change on the target
+      const parried = this.parrySystem.checkIncomingAttack(now, this.respectMeter);
+      if (parried) {
+        // Attacker walked into a parry — punish with a long stun
+        if (attacker.enterStun) attacker.enterStun(COMBAT.PARRY_STUN_MS);
+        return;
+      }
+
+      // Hit lands: arm iframes first, then apply damage, then impulse
+      target.setIframes(now + COMBAT.IFRAME_DURATION_MS);
+      target.applyDamage(damage);
+      if (attacker.sprite) {
+        const dir = target.sprite.x >= attacker.sprite.x ? 1 : -1;
+        target.applyKnockback(dir, COMBAT.PLAYER_KNOCKBACK, COMBAT.KNOCKBACK_VY, COMBAT.KNOCKBACK_DURATION_MS);
+      }
+    } else {
+      // ── Player → Enemy ────────────────────────────────────────────────────────
+      if (target.isDead) return;
+
+      if (isEnvKill) {
+        this.respectMeter.adjust(-RESPECT.PENALTY_ENVIRON_KILL);
+      }
+
+      target.applyDamage(damage, this.respectMeter);
+
+      if (!target.isDead && attacker.sprite) {
+        const dir = target.sprite.x >= attacker.sprite.x ? 1 : -1;
+        target.applyKnockback(dir, COMBAT.ENEMY_KNOCKBACK, COMBAT.KNOCKBACK_VY, COMBAT.KNOCKBACK_DURATION_MS);
+        target.enterStun(COMBAT.HITSTUN_MS);
+      }
+    }
+  }
+
   // ─── Spawning ────────────────────────────────────────────────────────────────
 
   _spawnEnemy(x, y, type) {
-    const enemy = new Enemy(this, x, y, type, this.respectMeter);
+    const enemy = new Enemy(this, x, y, type, this.respectMeter, this._onEnemyAttack);
     this._enemies.push(enemy);
     this._hurtboxGroup.add(enemy.hurtbox);
     return enemy;
@@ -108,7 +173,7 @@ export default class GameScene extends Phaser.Scene {
 
   _spawnWave(index) {
     const { height } = this.scale;
-    const defs = WAVES[index] ?? WAVES[WAVES.length - 1]; // loop last wave if past end
+    const defs = WAVES[index] ?? WAVES[WAVES.length - 1];
     defs.forEach(({ x, yFrac, type }) => {
       this._spawnEnemy(x, height * yFrac, type);
     });
@@ -118,7 +183,6 @@ export default class GameScene extends Phaser.Scene {
 
   _checkWaveAdvance() {
     if (this._waveDelay || this.player.isDead) return;
-
     const alive = this._enemies.filter((e) => !e.isDead).length;
     if (alive === 0) {
       this._waveDelay = true;
@@ -135,32 +199,28 @@ export default class GameScene extends Phaser.Scene {
   _checkOvenKill() {
     if (!Phaser.Input.Keyboard.JustDown(this._grabKey)) return;
 
-    const px = this.player.sprite.x;
-    const py = this.player.sprite.y;
-
-    // Player must be within 150px of oven center
+    const { x: px, y: py } = this.player.sprite;
     if (Math.abs(px - this._ovenCX) > 150 || Math.abs(py - this._ovenCY) > 100) return;
 
-    // Find closest living enemy near the oven
+    // Nearest living enemy within 120 px of the oven centre
     let target = null;
     let closest = Infinity;
     this._enemies.forEach((e) => {
       if (e.isDead) return;
       const d = Phaser.Math.Distance.Between(e.sprite.x, e.sprite.y, this._ovenCX, this._ovenCY);
-      if (d < 120 && d < closest) {
-        closest = d;
-        target = e;
-      }
+      if (d < 120 && d < closest) { closest = d; target = e; }
     });
 
     if (target) {
-      this.player.environmentalKill(target);
-      // Screen shake for drama
+      this._resolveHit(this.player, target, {
+        damage: PLAYER_CFG.ENVIRONMENTAL_KILL_DAMAGE,
+        isEnvKill: true,
+      });
       this.cameras.main.shake(250, 0.012);
     }
   }
 
-  // ─── World building ───────────────────────────────────────────────────────────
+  // ─── World ───────────────────────────────────────────────────────────────────
 
   _buildStreet(width, height) {
     const g = this.add.graphics();
@@ -179,7 +239,7 @@ export default class GameScene extends Phaser.Scene {
     g.lineTo(width * 2, height * 0.72);
     g.strokePath();
 
-    // Pizza oven — environmental kill zone
+    // Pizza oven — environmental kill hazard
     const ovenX = 640;
     const ovenY = height * 0.55;
     g.fillStyle(0x882200);
@@ -187,14 +247,11 @@ export default class GameScene extends Phaser.Scene {
     g.fillStyle(0xff6600);
     g.fillRect(ovenX + 10, ovenY + 10, 60, 40);
 
-    // Label so players know it's interactive
     this.add.text(ovenX + 40, ovenY - 14, '[V] OVEN', {
-      fontFamily: 'monospace',
-      fontSize: '11px',
-      color: '#ff9944',
+      fontFamily: 'monospace', fontSize: '11px', color: '#ff9944',
     }).setOrigin(0.5, 1);
 
-    // Store center for distance checks in _checkOvenKill
+    // Store centre for distance checks in _checkOvenKill
     this._ovenCX = ovenX + 40;
     this._ovenCY = ovenY + 30;
   }

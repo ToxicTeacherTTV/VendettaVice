@@ -17,6 +17,28 @@ export const PLAYER = {
   PARRY_COOLDOWN_MS: 350,  // low cooldown keeps it available; the window does the gating
 };
 
+// Combat resolution timings — single source of truth for all hit/hurt logic.
+// Change any value here and the full system adjusts; nothing is hardcoded elsewhere.
+export const COMBAT = {
+  // Player invulnerability after taking a hit (prevents combo shredding)
+  IFRAME_DURATION_MS: 600,
+  // How long the knockback velocity impulse overrides player input
+  KNOCKBACK_DURATION_MS: 200,
+  // Horizontal impulse magnitudes
+  PLAYER_KNOCKBACK: 300,
+  ENEMY_KNOCKBACK: 260,
+  // Shared vertical component of every knockback impulse
+  KNOCKBACK_VY: -60,
+  // How long an enemy is stunned after being hit by the player
+  HITSTUN_MS: 300,
+  // How long an attacker is stunned after the player successfully parries
+  PARRY_STUN_MS: 800,
+  // Enemy attack phases (telegraph → hit frame → recovery)
+  TELEGRAPH_MS: 500,   // wind-up: player has this window to parry
+  RECOVERY_MS: 300,    // post-attack pause before enemy can act again
+  ATTACK_COOLDOWN_MS: 1400, // min gap from one attack start to the next
+};
+
 // Respect meter — honor system
 // Falls when you fight dirty; rises when you fight with style
 export const RESPECT = {
