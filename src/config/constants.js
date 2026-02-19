@@ -13,21 +13,29 @@ export const PLAYER = {
   PUNCH_DAMAGE: 12,
   KICK_DAMAGE: 18,
   ENVIRONMENTAL_KILL_DAMAGE: 999,
-  PARRY_WINDOW_MS: 200,    // window to trigger a parry after blocking
-  PARRY_COOLDOWN_MS: 1500,
+  PARRY_WINDOW_MS: 110,    // tight but fair — tap C before impact
+  PARRY_COOLDOWN_MS: 350,  // low cooldown keeps it available; the window does the gating
 };
 
 // Respect meter — honor system
 // Falls when you fight dirty; rises when you fight with style
 export const RESPECT = {
   MAX: 100,
-  START: 60,
-  PENALTY_CHEAP_SHOT: 10,   // hitting downed enemies, etc.
-  PENALTY_ENVIRON_KILL: 5,  // slightly dirty but effective
-  GAIN_PARRY: 8,
-  GAIN_CLEAN_KO: 5,
+  START: 50,                // less buffer means honor tension starts immediately
+  PENALTY_CHEAP_SHOT: 10,   // hitting downed enemies
+  PENALTY_ENVIRON_KILL: 15, // most powerful skip option deserves the biggest cost
+  GAIN_PARRY: 6,            // capped per-enemy in game logic to prevent farming
+  GAIN_CLEAN_KO: 4,
   GAIN_FAIR_FIGHT: 3,       // winning an even 1v1
-  THRESHOLD_MOBSTER_HELP: 30, // below this, old-school guys walk away
+  THRESHOLD_MOBSTER_HELP: 45, // tighter ceiling forces real choices early
+};
+
+// Enemy HP — tuned so combos and parries are felt before the KO
+export const ENEMY_HP = {
+  TRACKSUIT_GOON: 60,
+  PASTA_DEALER: 78,
+  ENFORCER: 125,
+  EARL_GREY_AGENT: 92,
 };
 
 // Enemy types
