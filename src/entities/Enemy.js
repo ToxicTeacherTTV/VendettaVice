@@ -1,10 +1,10 @@
-import { ENEMY_TYPE, RESPECT } from '../config/constants.js';
+import { ENEMY_TYPE, ENEMY_HP, RESPECT } from '../config/constants.js';
 
 const ENEMY_STATS = {
-  [ENEMY_TYPE.TRACKSUIT_GOON]: { health: 40, speed: 80, damage: 8, color: 0x4444ff },
-  [ENEMY_TYPE.PASTA_DEALER]:   { health: 25, speed: 60, damage: 5, color: 0x00cc44 },
-  [ENEMY_TYPE.ENFORCER]:       { health: 80, speed: 70, damage: 15, color: 0xaa0000 },
-  [ENEMY_TYPE.EARL_GREY_AGENT]:{ health: 60, speed: 100, damage: 12, color: 0x888855 },
+  [ENEMY_TYPE.TRACKSUIT_GOON]: { health: ENEMY_HP.TRACKSUIT_GOON, speed: 80,  damage: 8,  color: 0x4444ff },
+  [ENEMY_TYPE.PASTA_DEALER]:   { health: ENEMY_HP.PASTA_DEALER,   speed: 60,  damage: 5,  color: 0x00cc44 },
+  [ENEMY_TYPE.ENFORCER]:       { health: ENEMY_HP.ENFORCER,       speed: 70,  damage: 15, color: 0xaa0000 },
+  [ENEMY_TYPE.EARL_GREY_AGENT]:{ health: ENEMY_HP.EARL_GREY_AGENT,speed: 100, damage: 12, color: 0x888855 },
 };
 
 export default class Enemy {
@@ -70,7 +70,16 @@ export default class Enemy {
     } else if (this._state === 'attack') {
       this.sprite.body.setVelocity(0);
       if (time > this._attackTimer) {
-        player.takeDamage(this.damage);
+        const parried = player.parrySystem.checkIncomingAttack(time, this.respectMeter);
+        if (parried) {
+          // Parry stuns the attacker — longer than a normal hit stun
+          this._state = 'stunned';
+          this.scene.time.delayedCall(800, () => {
+            if (!this.isDead) this._state = 'patrol';
+          });
+        } else {
+          player.takeDamage(this.damage, this);
+        }
         this._attackTimer = time + 1200;
       }
     } else {
@@ -90,6 +99,15 @@ export default class Enemy {
     // Update health bar width
     const pct = this.health / this.maxHealth;
     this._healthBar.width = 40 * pct;
+
+    // Knockback — push enemy away from attacker
+    if (attacker && attacker.sprite) {
+      const dir = this.sprite.x >= attacker.sprite.x ? 1 : -1;
+      this.sprite.body.setVelocity(dir * 260, -70);
+      this.scene.time.delayedCall(160, () => {
+        if (!this.isDead) this.sprite.body.setVelocity(0, 0);
+      });
+    }
 
     this._state = 'stunned';
     this.scene.time.delayedCall(300, () => {

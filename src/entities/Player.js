@@ -35,6 +35,8 @@ export default class Player {
     });
 
     this._attackCooldown = 0;
+    this._iframeUntil = 0;
+    this._knockbackUntil = 0;
   }
 
   update(time, delta) {
@@ -51,6 +53,9 @@ export default class Player {
   }
 
   _handleMovement() {
+    // Don't override knockback velocity until the impulse window expires
+    if (this.scene.time.now < this._knockbackUntil) return;
+
     const speed = CFG.SPEED;
     const body = this.sprite.body;
 
@@ -113,10 +118,25 @@ export default class Player {
     this.respectMeter.adjust(-RESPECT.PENALTY_ENVIRON_KILL);
   }
 
-  takeDamage(amount) {
+  takeDamage(amount, source = null) {
     if (this.isDead) return;
+    if (this.scene.time.now < this._iframeUntil) return; // invulnerable
+
     this.health = Math.max(0, this.health - amount);
     this.scene.events.emit('healthChanged', this.health);
+
+    // 600ms invulnerability window after each hit
+    this._iframeUntil = this.scene.time.now + 600;
+
+    // Knockback — push player away from the attacker
+    if (source && source.sprite) {
+      const dir = this.sprite.x >= source.sprite.x ? 1 : -1;
+      this._knockbackUntil = this.scene.time.now + 200;
+      this.sprite.body.setVelocity(dir * 300, -60);
+      this.scene.time.delayedCall(200, () => {
+        if (!this.isDead) this.sprite.body.setVelocity(0, 0);
+      });
+    }
 
     // Flash red
     this.scene.tweens.add({

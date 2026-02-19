@@ -1,17 +1,38 @@
-import { SCENE, PLAYER as PLAYER_CONFIG, RESPECT } from '../config/constants.js';
+import { SCENE, PLAYER as PLAYER_CONFIG, RESPECT, ENEMY_TYPE } from '../config/constants.js';
 import Player from '../entities/Player.js';
 import Enemy from '../entities/Enemy.js';
 import RespectMeter from '../systems/RespectMeter.js';
 import ParrySystem from '../systems/ParrySystem.js';
-import { ENEMY_TYPE } from '../config/constants.js';
+
+// Wave definitions — deterministic, index = wave number (0-based)
+// Positions are world-x so the player has to move forward.
+const WAVES = [
+  // Wave 1
+  [
+    { x: 400, yFrac: 0.62, type: ENEMY_TYPE.TRACKSUIT_GOON },
+    { x: 550, yFrac: 0.65, type: ENEMY_TYPE.TRACKSUIT_GOON },
+    { x: 700, yFrac: 0.60, type: ENEMY_TYPE.TRACKSUIT_GOON },
+  ],
+  // Wave 2
+  [
+    { x: 350, yFrac: 0.60, type: ENEMY_TYPE.TRACKSUIT_GOON },
+    { x: 500, yFrac: 0.65, type: ENEMY_TYPE.TRACKSUIT_GOON },
+    { x: 650, yFrac: 0.62, type: ENEMY_TYPE.TRACKSUIT_GOON },
+    { x: 800, yFrac: 0.61, type: ENEMY_TYPE.TRACKSUIT_GOON },
+  ],
+  // Wave 3
+  [
+    { x: 300, yFrac: 0.62, type: ENEMY_TYPE.TRACKSUIT_GOON },
+    { x: 500, yFrac: 0.60, type: ENEMY_TYPE.TRACKSUIT_GOON },
+    { x: 700, yFrac: 0.65, type: ENEMY_TYPE.ENFORCER },
+    { x: 900, yFrac: 0.62, type: ENEMY_TYPE.TRACKSUIT_GOON },
+    { x: 1050, yFrac: 0.63, type: ENEMY_TYPE.TRACKSUIT_GOON },
+  ],
+];
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
     super({ key: SCENE.GAME });
-    this.player = null;
-    this.enemies = null;
-    this.respectMeter = null;
-    this.parrySystem = null;
   }
 
   create() {
@@ -27,25 +48,37 @@ export default class GameScene extends Phaser.Scene {
     // --- Player ---
     this.player = new Player(this, 160, height * 0.62, this.respectMeter, this.parrySystem);
 
-    // --- Enemies ---
-    this.enemies = this.add.group();
-    this._spawnInitialEnemies(width, height);
+    // --- Enemy tracking ---
+    // Plain array of Enemy instances; separate Phaser group for hurtbox overlap.
+    this._enemies = [];
+    this._hurtboxGroup = this.add.group();
 
-    // --- Physics ---
+    // --- Physics overlap: player hitbox vs all enemy hurtboxes ---
     this.physics.add.overlap(
       this.player.hitbox,
-      this.enemies.getChildren().map((e) => e.hurtbox),
-      (playerHitbox, enemyHurtbox) => {
+      this._hurtboxGroup,
+      (_playerHitbox, enemyHurtbox) => {
+        if (!this.player.isAttacking || this.player.currentAttackDamage <= 0) return;
         const enemy = enemyHurtbox.getData('owner');
-        if (enemy) enemy.takeDamage(this.player.currentAttackDamage, this.player, this.respectMeter);
+        if (enemy && !enemy.isDead) {
+          enemy.takeDamage(this.player.currentAttackDamage, this.player, this.respectMeter);
+        }
       }
     );
+
+    // --- Input: grab key for environmental kill ---
+    this._grabKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.V);
+
+    // --- Waves ---
+    this._waveIndex = 0;
+    this._waveDelay = false;
+    this._spawnWave(this._waveIndex);
 
     // --- Camera ---
     this.cameras.main.setBounds(0, 0, width * 2, height);
     this.cameras.main.startFollow(this.player.sprite, true, 0.1, 0.1);
 
-    // Emit initial respect value so UI can sync
+    // Emit initial UI values
     this.events.emit('respectChanged', this.respectMeter.value);
     this.events.emit('healthChanged', PLAYER_CONFIG.HEALTH);
   }
@@ -54,16 +87,82 @@ export default class GameScene extends Phaser.Scene {
     this.player.update(time, delta);
     this.parrySystem.update(time);
 
-    this.enemies.getChildren().forEach((enemy) => enemy.update(time, delta, this.player));
+    this._enemies.forEach((enemy) => enemy.update(time, delta, this.player));
 
-    // Check if all mobster support is lost
+    this._checkOvenKill();
+    this._checkWaveAdvance();
+
     if (this.respectMeter.value < RESPECT.THRESHOLD_MOBSTER_HELP) {
       this.events.emit('mobstersSplit');
     }
   }
 
+  // ─── Spawning ────────────────────────────────────────────────────────────────
+
+  _spawnEnemy(x, y, type) {
+    const enemy = new Enemy(this, x, y, type, this.respectMeter);
+    this._enemies.push(enemy);
+    this._hurtboxGroup.add(enemy.hurtbox);
+    return enemy;
+  }
+
+  _spawnWave(index) {
+    const { height } = this.scale;
+    const defs = WAVES[index] ?? WAVES[WAVES.length - 1]; // loop last wave if past end
+    defs.forEach(({ x, yFrac, type }) => {
+      this._spawnEnemy(x, height * yFrac, type);
+    });
+  }
+
+  // ─── Wave advance ─────────────────────────────────────────────────────────────
+
+  _checkWaveAdvance() {
+    if (this._waveDelay || this.player.isDead) return;
+
+    const alive = this._enemies.filter((e) => !e.isDead).length;
+    if (alive === 0) {
+      this._waveDelay = true;
+      this.time.delayedCall(2000, () => {
+        this._waveIndex++;
+        this._spawnWave(this._waveIndex);
+        this._waveDelay = false;
+      });
+    }
+  }
+
+  // ─── Environmental kill ───────────────────────────────────────────────────────
+
+  _checkOvenKill() {
+    if (!Phaser.Input.Keyboard.JustDown(this._grabKey)) return;
+
+    const px = this.player.sprite.x;
+    const py = this.player.sprite.y;
+
+    // Player must be within 150px of oven center
+    if (Math.abs(px - this._ovenCX) > 150 || Math.abs(py - this._ovenCY) > 100) return;
+
+    // Find closest living enemy near the oven
+    let target = null;
+    let closest = Infinity;
+    this._enemies.forEach((e) => {
+      if (e.isDead) return;
+      const d = Phaser.Math.Distance.Between(e.sprite.x, e.sprite.y, this._ovenCX, this._ovenCY);
+      if (d < 120 && d < closest) {
+        closest = d;
+        target = e;
+      }
+    });
+
+    if (target) {
+      this.player.environmentalKill(target);
+      // Screen shake for drama
+      this.cameras.main.shake(250, 0.012);
+    }
+  }
+
+  // ─── World building ───────────────────────────────────────────────────────────
+
   _buildStreet(width, height) {
-    // Neon Little Italy backdrop — placeholder rectangles until art ships
     const g = this.add.graphics();
 
     // Sky
@@ -88,25 +187,15 @@ export default class GameScene extends Phaser.Scene {
     g.fillStyle(0xff6600);
     g.fillRect(ovenX + 10, ovenY + 10, 60, 40);
 
-    // Mark oven as environmental kill trigger
-    const ovenZone = this.add.zone(ovenX + 40, ovenY + 30, 80, 60);
-    this.physics.world.enable(ovenZone);
-    ovenZone.setData('type', 'envKill');
-    ovenZone.setData('label', 'PIZZA OVEN');
+    // Label so players know it's interactive
+    this.add.text(ovenX + 40, ovenY - 14, '[V] OVEN', {
+      fontFamily: 'monospace',
+      fontSize: '11px',
+      color: '#ff9944',
+    }).setOrigin(0.5, 1);
 
-    this.ovenZone = ovenZone;
-  }
-
-  _spawnInitialEnemies(width, height) {
-    const spawnPoints = [
-      { x: 400, y: height * 0.62, type: ENEMY_TYPE.TRACKSUIT_GOON },
-      { x: 550, y: height * 0.65, type: ENEMY_TYPE.PASTA_DEALER },
-      { x: 750, y: height * 0.60, type: ENEMY_TYPE.TRACKSUIT_GOON },
-    ];
-
-    spawnPoints.forEach(({ x, y, type }) => {
-      const enemy = new Enemy(this, x, y, type, this.respectMeter);
-      this.enemies.add(enemy);
-    });
+    // Store center for distance checks in _checkOvenKill
+    this._ovenCX = ovenX + 40;
+    this._ovenCY = ovenY + 30;
   }
 }
