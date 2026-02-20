@@ -1,4 +1,5 @@
 import { RESPECT } from '../config/constants.js';
+import { applyRespect } from '../logic/respect.js';
 
 /**
  * RespectMeter — tracks Tony's honor in the neighborhood.
@@ -18,7 +19,7 @@ export default class RespectMeter {
 
   /** Positive amount = gaining respect. Negative = losing it. */
   adjust(amount) {
-    this._value = Math.min(RESPECT.MAX, Math.max(0, this._value + amount));
+    this._value = applyRespect(this._value, amount);
     this._scene.events.emit('respectChanged', this._value);
   }
 

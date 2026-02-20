@@ -37,6 +37,8 @@ export const COMBAT = {
   TELEGRAPH_MS: 500,   // wind-up: player has this window to parry
   RECOVERY_MS: 300,    // post-attack pause before enemy can act again
   ATTACK_COOLDOWN_MS: 1400, // min gap from one attack start to the next
+  // Fraction of damage that gets through while blocking (C held, parry window expired)
+  BLOCK_DAMAGE_REDUCTION: 0.5,
 };
 
 // Respect meter — honor system

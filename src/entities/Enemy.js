@@ -63,6 +63,7 @@ export default class Enemy {
     this._state = 'patrol'; // patrol | chase | telegraph | recovery | stunned
     this._attackCooldown = 0;
     this._pendingHit = null; // delayedCall handle — cancelled on stun/death
+    this._lastHitId = null;  // dedup: same player swing can't hit this enemy twice
 
     // Deterministic patrol: direction and interval are fixed per spawn-index
     this._patrolDir   = PATROL_DIR_FOR_INDEX(spawnIndex);

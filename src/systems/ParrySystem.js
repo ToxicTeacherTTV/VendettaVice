@@ -54,6 +54,23 @@ export default class ParrySystem {
     this._successCallbacks.push(cb);
   }
 
+  // ─── Accessors for pure resolveHit ───────────────────────────────────────────
+
+  /** Raw timestamp: parry window is open while nowMs <= parryUntil. */
+  get parryUntil() {
+    return this._parryActiveUntil;
+  }
+
+  /**
+   * Consume the parry window after resolveHit() reports outcome='parried'.
+   * Fires the success flash and any registered callbacks.
+   */
+  consumeParry() {
+    this._parryActiveUntil = 0;
+    this._scene.cameras.main.flash(120, 255, 200, 0, false);
+    this._successCallbacks.forEach((cb) => cb());
+  }
+
   // ─── Debug accessors ─────────────────────────────────────────────────────────
 
   /** True while the parry window is open (C was pressed recently). */

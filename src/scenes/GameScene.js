@@ -3,37 +3,13 @@ import {
   PLAYER as PLAYER_CFG,
   RESPECT,
   COMBAT,
-  ENEMY_TYPE,
 } from '../config/constants.js';
 import Player from '../entities/Player.js';
 import Enemy  from '../entities/Enemy.js';
 import RespectMeter from '../systems/RespectMeter.js';
 import ParrySystem  from '../systems/ParrySystem.js';
-
-// ─── Wave definitions ─────────────────────────────────────────────────────────
-// Fully deterministic: index = wave number (0-based), loops last wave when exhausted.
-const WAVES = [
-  // Wave 1 — 3 goons, spread out
-  [
-    { x: 400, yFrac: 0.62, type: ENEMY_TYPE.TRACKSUIT_GOON },
-    { x: 550, yFrac: 0.65, type: ENEMY_TYPE.TRACKSUIT_GOON },
-    { x: 700, yFrac: 0.60, type: ENEMY_TYPE.TRACKSUIT_GOON },
-  ],
-  // Wave 2 — 4 goons, tighter
-  [
-    { x: 350, yFrac: 0.60, type: ENEMY_TYPE.TRACKSUIT_GOON },
-    { x: 500, yFrac: 0.65, type: ENEMY_TYPE.TRACKSUIT_GOON },
-    { x: 650, yFrac: 0.62, type: ENEMY_TYPE.TRACKSUIT_GOON },
-    { x: 800, yFrac: 0.61, type: ENEMY_TYPE.TRACKSUIT_GOON },
-  ],
-  // Wave 3 — 3 goons + 1 mini-boss (parry-pressure test)
-  [
-    { x: 300, yFrac: 0.62, type: ENEMY_TYPE.TRACKSUIT_GOON },
-    { x: 500, yFrac: 0.60, type: ENEMY_TYPE.TRACKSUIT_GOON },
-    { x: 700, yFrac: 0.65, type: ENEMY_TYPE.MINI_BOSS },
-    { x: 900, yFrac: 0.62, type: ENEMY_TYPE.TRACKSUIT_GOON },
-  ],
-];
+import { resolveHit }    from '../logic/combat.js';
+import { WAVES, nextWave } from '../logic/waves.js';
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -59,10 +35,14 @@ export default class GameScene extends Phaser.Scene {
     // Phaser group so physics.add.overlap can check against a dynamic set
     this._hurtboxGroup = this.add.group();
 
-    // The callback Enemy calls at its hit frame — all resolution happens here
+    // The callback Enemy calls at its hit frame — all resolution happens here.
+    // Each attack gets a unique hitId so resolveHit can dedup if called twice.
     this._onEnemyAttack = (enemy) => {
       if (!enemy.isDead && !this.player.isDead) {
-        this._resolveHit(enemy, this.player, { damage: enemy.damage });
+        this._resolveHit(enemy, this.player, {
+          damage: enemy.damage,
+          hitId: `${enemy.type}-${this.time.now}`,
+        });
       }
     };
 
@@ -77,7 +57,10 @@ export default class GameScene extends Phaser.Scene {
         if (!this.player.isAttacking || this.player.currentAttackDamage <= 0) return;
         const enemy = enemyHurtbox.getData('owner');
         if (enemy) {
-          this._resolveHit(this.player, enemy, { damage: this.player.currentAttackDamage });
+          this._resolveHit(this.player, enemy, {
+            damage: this.player.currentAttackDamage,
+            hitId:  this.player.currentHitId,
+          });
         }
       },
     );
@@ -114,45 +97,65 @@ export default class GameScene extends Phaser.Scene {
   // ─── Combat resolver ──────────────────────────────────────────────────────────
   /**
    * Single entry point for ALL hit resolution.
-   * Called by: physics overlap (player→enemy), enemy attack callback (enemy→player),
-   *            and the oven kill (player→enemy with isEnvKill).
+   * Builds plain defender/attack objects, delegates logic to the pure resolveHit()
+   * function, then applies the result to Phaser sprites/systems.
    *
    * @param {Player|Enemy} attacker
    * @param {Player|Enemy} target
-   * @param {{ damage: number, isEnvKill?: boolean }} meta
+   * @param {{ damage: number, hitId?: string|null, isEnvKill?: boolean }} meta
    */
   _resolveHit(attacker, target, meta) {
-    const { damage, isEnvKill = false } = meta;
+    const { damage, hitId = null, isEnvKill = false } = meta;
     const now = this.time.now;
 
     if (target === this.player) {
       // ── Enemy → Player ────────────────────────────────────────────────────────
-      if (target.isInvulnerable) return;
+      const defender = {
+        iframeUntil: target._iframeUntil,
+        parryUntil:  this.parrySystem.parryUntil,
+        isBlocking:  target.isBlocking,
+        health:      target.health,
+        lastHitId:   target._lastHitId,
+      };
+      const result = resolveHit({ nowMs: now, defender, attack: { damage, hitId } });
 
-      // Parry check — must happen before any state change on the target
-      const parried = this.parrySystem.checkIncomingAttack(now, this.respectMeter);
-      if (parried) {
-        // Attacker walked into a parry — punish with a long stun
+      if (result.outcome === 'ignored') return;
+
+      if (result.outcome === 'parried') {
+        this.parrySystem.consumeParry();               // visual flash + callbacks
+        this.respectMeter.adjust(result.respectDelta); // GAIN_PARRY
         if (attacker.enterStun) attacker.enterStun(COMBAT.PARRY_STUN_MS);
         return;
       }
 
-      // Hit lands: arm iframes first, then apply damage, then impulse
-      target.setIframes(now + COMBAT.IFRAME_DURATION_MS);
-      target.applyDamage(damage);
+      // 'hit' or 'blocked'
+      target._lastHitId = hitId;
+      target.setIframes(result.iframeUntil);
+      target.applyDamage(result.damageDealt);
       if (attacker.sprite) {
         const dir = target.sprite.x >= attacker.sprite.x ? 1 : -1;
         target.applyKnockback(dir, COMBAT.PLAYER_KNOCKBACK, COMBAT.KNOCKBACK_VY, COMBAT.KNOCKBACK_DURATION_MS);
       }
     } else {
       // ── Player → Enemy ────────────────────────────────────────────────────────
+      // Enemies have no iframes or parry — isDead is the only ignore guard.
       if (target.isDead) return;
 
-      if (isEnvKill) {
-        this.respectMeter.adjust(-RESPECT.PENALTY_ENVIRON_KILL);
-      }
+      const defender = {
+        iframeUntil: 0,
+        parryUntil:  0,
+        isBlocking:  false,
+        health:      target.health,
+        lastHitId:   target._lastHitId,
+      };
+      const result = resolveHit({ nowMs: now, defender, attack: { damage, hitId } });
 
-      target.applyDamage(damage, this.respectMeter);
+      if (result.outcome === 'ignored') return; // dedup: same swing already hit this enemy
+
+      if (isEnvKill) this.respectMeter.adjust(-RESPECT.PENALTY_ENVIRON_KILL);
+
+      target._lastHitId = hitId;
+      target.applyDamage(result.damageDealt, this.respectMeter);
 
       if (!target.isDead && attacker.sprite) {
         const dir = target.sprite.x >= attacker.sprite.x ? 1 : -1;
@@ -193,8 +196,11 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _spawnWave(index) {
+    this._spawnDefs(WAVES[index] ?? WAVES[WAVES.length - 1]);
+  }
+
+  _spawnDefs(defs) {
     const { height } = this.scale;
-    const defs = WAVES[index] ?? WAVES[WAVES.length - 1];
     defs.forEach(({ x, yFrac, type }) => {
       this._spawnEnemy(x, height * yFrac, type);
     });
@@ -208,8 +214,9 @@ export default class GameScene extends Phaser.Scene {
     if (alive === 0) {
       this._waveDelay = true;
       this.time.delayedCall(2000, () => {
-        this._waveIndex++;
-        this._spawnWave(this._waveIndex);
+        const { waveIndex, defs } = nextWave({ waveIndex: this._waveIndex });
+        this._waveIndex = waveIndex;
+        this._spawnDefs(defs);
         this._waveDelay = false;
       });
     }

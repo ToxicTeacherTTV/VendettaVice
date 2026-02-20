@@ -22,6 +22,9 @@ export default class Player {
     this._iframeUntil = 0;
     this._knockbackUntil = 0;
     this._attackCooldown = 0;
+    // Hit dedup: _hitId changes each swing; _lastHitId records what hit us last
+    this._hitId = 0;
+    this._lastHitId = null;
 
     // Placeholder sprite — replace with spritesheet once art is ready
     this.sprite = scene.physics.add.image(x, y, '__DEFAULT').setDisplaySize(48, 64);
@@ -46,6 +49,16 @@ export default class Player {
   get isInvulnerable() {
     return this.scene.time.now < this._iframeUntil;
   }
+
+  /** Current swing ID — changes every _beginAttack call. Used for hit dedup. */
+  get currentHitId() { return String(this._hitId); }
+
+  /**
+   * True while the player is actively blocking (C held, parry window may be open).
+   * Currently always false — mechanic reserved for future tuning.
+   * Passed as defender.isBlocking to the pure resolveHit function.
+   */
+  get isBlocking() { return false; }
 
   /**
    * Human-readable state string for the debug HUD.
@@ -112,6 +125,7 @@ export default class Player {
   }
 
   _beginAttack(damage, cooldownMs) {
+    this._hitId++;            // new ID per swing — resolveHit uses it to prevent multi-hit
     this.currentAttackDamage = damage;
     this.isAttacking = true;
     this.hitbox.body.enable = true;
