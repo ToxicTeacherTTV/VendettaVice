@@ -47,6 +47,19 @@ export default class Player {
     return this.scene.time.now < this._iframeUntil;
   }
 
+  /**
+   * Human-readable state string for the debug HUD.
+   * Priority order matters: a hit during an attack is still 'attack'.
+   */
+  get debugState() {
+    const now = this.scene.time.now;
+    if (this.isDead)                       return 'dead';
+    if (this.isAttacking)                  return 'attack';
+    if (now < this._iframeUntil)           return 'iframes';
+    if (this.parrySystem.isWindowActive)   return 'parry';
+    return 'idle';
+  }
+
   // ─── Per-frame update ────────────────────────────────────────────────────────
 
   update(time, _delta) {

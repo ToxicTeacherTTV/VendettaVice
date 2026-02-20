@@ -58,6 +58,7 @@ export const ENEMY_HP = {
   PASTA_DEALER: 78,
   ENFORCER: 125,
   EARL_GREY_AGENT: 92,
+  MINI_BOSS: 200, // same class, more HP + faster attacks to pressure-test parry
 };
 
 // Enemy types
@@ -66,6 +67,7 @@ export const ENEMY_TYPE = {
   PASTA_DEALER: 'pasta_dealer',
   ENFORCER: 'enforcer',
   EARL_GREY_AGENT: 'earl_grey_agent', // British arch-nemesis faction
+  MINI_BOSS: 'mini_boss',
 };
 
 // The omertà code — sequence of inputs for the secret ending
@@ -79,4 +81,5 @@ export const SCENE = {
   GAME: 'GameScene',
   UI: 'UIScene',
   SECRET_ENDING: 'SecretEndingScene',
+  DEBUG: 'DebugScene',
 };

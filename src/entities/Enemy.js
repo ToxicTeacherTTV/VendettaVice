@@ -1,11 +1,27 @@
 import { ENEMY_TYPE, ENEMY_HP, RESPECT, COMBAT } from '../config/constants.js';
 
+// telegraphMs / attackCooldownMs override COMBAT defaults when present.
+// Omit them to inherit global timings.
 const ENEMY_STATS = {
   [ENEMY_TYPE.TRACKSUIT_GOON]: { health: ENEMY_HP.TRACKSUIT_GOON, speed: 80,  damage: 8,  color: 0x4444ff },
   [ENEMY_TYPE.PASTA_DEALER]:   { health: ENEMY_HP.PASTA_DEALER,   speed: 60,  damage: 5,  color: 0x00cc44 },
   [ENEMY_TYPE.ENFORCER]:       { health: ENEMY_HP.ENFORCER,       speed: 70,  damage: 15, color: 0xaa0000 },
   [ENEMY_TYPE.EARL_GREY_AGENT]:{ health: ENEMY_HP.EARL_GREY_AGENT,speed: 100, damage: 12, color: 0x888855 },
+  // Mini-boss: same class, shorter telegraph (harder to parry) + faster cooldown
+  [ENEMY_TYPE.MINI_BOSS]: {
+    health: ENEMY_HP.MINI_BOSS,
+    speed: 60,
+    damage: 22,
+    color: 0xff00aa,
+    telegraphMs: 280,      // vs COMBAT.TELEGRAPH_MS (500ms) — must read and react fast
+    attackCooldownMs: 900, // vs COMBAT.ATTACK_COOLDOWN_MS (1400ms) — relentless pressure
+  },
 };
+
+// Patrol direction cycles are fixed per spawn-index so every run is identical.
+// Even-indexed enemies start patrolling right; odd-indexed start left.
+const PATROL_DIR_FOR_INDEX = (i) => (i % 2 === 0 ? 1 : -1);
+const PATROL_INTERVAL_MS   = 2000; // fixed — no randomness
 
 /**
  * Enemy AI uses a strict state machine:
@@ -18,14 +34,15 @@ const ENEMY_STATS = {
  */
 export default class Enemy {
   /**
-   * @param {Phaser.Scene} scene
-   * @param {number} x
-   * @param {number} y
-   * @param {string} type  — one of ENEMY_TYPE
-   * @param {RespectMeter} respectMeter
-   * @param {function(Enemy):void} onAttack  — called at the hit frame; resolveHit lives there
+   * @param {Phaser.Scene}            scene
+   * @param {number}                  x
+   * @param {number}                  y
+   * @param {string}                  type        — one of ENEMY_TYPE
+   * @param {RespectMeter}            respectMeter
+   * @param {function(Enemy):void}    onAttack    — called at the hit frame
+   * @param {number}                  spawnIndex  — deterministic patrol seeding
    */
-  constructor(scene, x, y, type, respectMeter, onAttack) {
+  constructor(scene, x, y, type, respectMeter, onAttack, spawnIndex = 0) {
     this.scene = scene;
     this.type = type;
     this.respectMeter = respectMeter;
@@ -38,24 +55,39 @@ export default class Enemy {
     this.damage = stats.damage;
     this._baseColor = stats.color;
 
+    // Per-instance timing — stats can override COMBAT globals for special enemies
+    this._telegraphMs      = stats.telegraphMs      ?? COMBAT.TELEGRAPH_MS;
+    this._attackCooldownMs = stats.attackCooldownMs ?? COMBAT.ATTACK_COOLDOWN_MS;
+
     this.isDead = false;
     this._state = 'patrol'; // patrol | chase | telegraph | recovery | stunned
     this._attackCooldown = 0;
     this._pendingHit = null; // delayedCall handle — cancelled on stun/death
+
+    // Deterministic patrol: direction and interval are fixed per spawn-index
+    this._patrolDir   = PATROL_DIR_FOR_INDEX(spawnIndex);
+    this._patrolTimer = 0; // first tick will set the real timer
 
     // Placeholder sprite
     this.sprite = scene.physics.add.image(x, y, '__DEFAULT').setDisplaySize(40, 60);
     this.sprite.setTint(this._baseColor);
     this.sprite.setCollideWorldBounds(true);
 
+    // Mini-boss gets a larger sprite so it reads differently at a glance
+    if (type === ENEMY_TYPE.MINI_BOSS) {
+      this.sprite.setDisplaySize(56, 72);
+    }
+
     // Hurtbox — separate zone so the player hitbox overlap fires cleanly
     this.hurtbox = scene.add.zone(x, y, 44, 64);
     scene.physics.world.enable(this.hurtbox);
     this.hurtbox.setData('owner', this);
 
-    // Health bar
-    this._healthBarBg = scene.add.rectangle(x, y - 40, 40, 5, 0x440000);
-    this._healthBar   = scene.add.rectangle(x, y - 40, 40, 5, 0xff3300);
+    // Health bar (wider for mini-boss)
+    const barW = type === ENEMY_TYPE.MINI_BOSS ? 60 : 40;
+    this._healthBarBg = scene.add.rectangle(x, y - 44, barW, 5, 0x440000);
+    this._healthBar   = scene.add.rectangle(x, y - 44, barW, 5, 0xff3300);
+    this._barW = barW;
   }
 
   // ─── Per-frame update ────────────────────────────────────────────────────────
@@ -65,8 +97,8 @@ export default class Enemy {
 
     // Sync hurtbox and health bar to sprite position
     this.hurtbox.setPosition(this.sprite.x, this.sprite.y);
-    this._healthBarBg.setPosition(this.sprite.x, this.sprite.y - 40);
-    this._healthBar.setPosition(this.sprite.x, this.sprite.y - 40);
+    this._healthBarBg.setPosition(this.sprite.x, this.sprite.y - 44);
+    this._healthBar.setPosition(this.sprite.x, this.sprite.y - 44);
 
     this._ai(time, player);
   }
@@ -85,11 +117,9 @@ export default class Enemy {
     );
 
     if (dist < 50) {
-      // In striking range — stop moving
+      // In striking range — stand still and wait for attack cooldown
       this.sprite.body.setVelocity(0);
-      if (time > this._attackCooldown) {
-        this._beginAttack();
-      }
+      if (time > this._attackCooldown) this._beginAttack();
       return;
     }
 
@@ -98,9 +128,10 @@ export default class Enemy {
       this.scene.physics.moveToObject(this.sprite, player.sprite, this.speed);
     } else {
       this._state = 'patrol';
-      if (!this._patrolDir || this._patrolTimer < time) {
-        this._patrolDir = Math.random() > 0.5 ? 1 : -1;
-        this._patrolTimer = time + Phaser.Math.Between(1500, 3000);
+      // Flip direction on a fixed interval — fully deterministic, no randomness
+      if (this._patrolTimer < time) {
+        this._patrolDir  *= -1;
+        this._patrolTimer = time + PATROL_INTERVAL_MS;
       }
       this.sprite.body.setVelocityX(this._patrolDir * 30);
     }
@@ -110,12 +141,11 @@ export default class Enemy {
 
   _beginAttack() {
     this._state = 'telegraph';
-    this.sprite.body.setVelocity(0); // stand still during wind-up
-    this.sprite.setTint(0xffff00);   // yellow = telegraphing
+    this.sprite.body.setVelocity(0);
+    this.sprite.setTint(0xffff00); // yellow = telegraphing
 
-    this._pendingHit = this.scene.time.delayedCall(COMBAT.TELEGRAPH_MS, () => {
+    this._pendingHit = this.scene.time.delayedCall(this._telegraphMs, () => {
       this._pendingHit = null;
-      // Guard: another system may have changed state (e.g., stun on parry)
       if (this.isDead || this._state !== 'telegraph') return;
 
       // Hit frame — delegate entirely to GameScene._resolveHit via callback
@@ -123,36 +153,23 @@ export default class Enemy {
       this.sprite.setTint(this._baseColor);
       this._onAttack(this);
 
-      // After recovery, return to patrol so _ai can re-evaluate distance
       this.scene.time.delayedCall(COMBAT.RECOVERY_MS, () => {
         if (!this.isDead && this._state === 'recovery') this._state = 'patrol';
       });
 
-      // Cooldown starts at the hit frame so back-to-back attacks are spaced out
-      this._attackCooldown = this.scene.time.now + COMBAT.ATTACK_COOLDOWN_MS;
+      this._attackCooldown = this.scene.time.now + this._attackCooldownMs;
     });
   }
 
   // ─── Mutation API (called exclusively by GameScene._resolveHit) ───────────────
 
-  /**
-   * Consume HP and update health bar. Death handling included.
-   * No knockback or stun here — resolveHit orchestrates those separately.
-   */
   applyDamage(amount, respectMeter) {
     if (this.isDead) return;
     this.health = Math.max(0, this.health - amount);
-    this._healthBar.width = 40 * (this.health / this.maxHealth);
+    this._healthBar.width = this._barW * (this.health / this.maxHealth);
     if (this.health <= 0) this._die(respectMeter);
   }
 
-  /**
-   * Apply a directional velocity impulse.
-   * @param {number} dir      +1 = right, -1 = left
-   * @param {number} speedX
-   * @param {number} speedY   negative = upward
-   * @param {number} duration ms until velocity is cleared
-   */
   applyKnockback(dir, speedX, speedY, duration) {
     this.sprite.body.setVelocity(dir * speedX, speedY);
     this.scene.time.delayedCall(duration, () => {
@@ -161,8 +178,8 @@ export default class Enemy {
   }
 
   /**
-   * Enter stunned state for `ms` milliseconds.
-   * Cancels any in-flight telegraph so a parried/hit enemy can't still land a blow.
+   * Enter stunned state for `ms` ms.
+   * Cancels any in-flight telegraph so a parried enemy can't still land its blow.
    */
   enterStun(ms) {
     if (this._pendingHit) {
@@ -179,7 +196,6 @@ export default class Enemy {
   // ─── Death ───────────────────────────────────────────────────────────────────
 
   _die(respectMeter) {
-    // Cancel any pending attack
     if (this._pendingHit) {
       this._pendingHit.remove(false);
       this._pendingHit = null;
@@ -187,7 +203,6 @@ export default class Enemy {
 
     this.isDead = true;
     respectMeter.adjust(RESPECT.GAIN_CLEAN_KO);
-    // RespectMeter.adjust already emits 'respectChanged', no need to re-emit here
 
     this.scene.tweens.add({
       targets: this.sprite,

@@ -53,4 +53,16 @@ export default class ParrySystem {
   onParrySuccess(cb) {
     this._successCallbacks.push(cb);
   }
+
+  // ─── Debug accessors ─────────────────────────────────────────────────────────
+
+  /** True while the parry window is open (C was pressed recently). */
+  get isWindowActive() {
+    return this._scene.time.now < this._parryActiveUntil;
+  }
+
+  /** Milliseconds remaining in the current parry window, or 0 if inactive. */
+  get windowRemainingMs() {
+    return Math.max(0, this._parryActiveUntil - this._scene.time.now);
+  }
 }

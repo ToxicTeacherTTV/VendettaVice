@@ -26,13 +26,12 @@ const WAVES = [
     { x: 650, yFrac: 0.62, type: ENEMY_TYPE.TRACKSUIT_GOON },
     { x: 800, yFrac: 0.61, type: ENEMY_TYPE.TRACKSUIT_GOON },
   ],
-  // Wave 3 — 4 goons + 1 enforcer
+  // Wave 3 — 3 goons + 1 mini-boss (parry-pressure test)
   [
     { x: 300, yFrac: 0.62, type: ENEMY_TYPE.TRACKSUIT_GOON },
     { x: 500, yFrac: 0.60, type: ENEMY_TYPE.TRACKSUIT_GOON },
-    { x: 700, yFrac: 0.65, type: ENEMY_TYPE.ENFORCER },
+    { x: 700, yFrac: 0.65, type: ENEMY_TYPE.MINI_BOSS },
     { x: 900, yFrac: 0.62, type: ENEMY_TYPE.TRACKSUIT_GOON },
-    { x: 1050, yFrac: 0.63, type: ENEMY_TYPE.TRACKSUIT_GOON },
   ],
 ];
 
@@ -56,6 +55,7 @@ export default class GameScene extends Phaser.Scene {
 
     // ── Enemies ────────────────────────────────────────────────────────────────
     this._enemies = [];
+    this._spawnCount = 0; // monotonic counter — gives each enemy a deterministic index
     // Phaser group so physics.add.overlap can check against a dynamic set
     this._hurtboxGroup = this.add.group();
 
@@ -162,10 +162,31 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  // ─── Debug snapshot ───────────────────────────────────────────────────────────
+  /**
+   * Returns a plain object of current state for the DebugScene HUD.
+   * Polled every frame — no events, no coupling.
+   * Returns null if the scene hasn't finished initialising yet.
+   */
+  debugSnapshot(now) {
+    if (!this.player || !this.parrySystem || !this.respectMeter) return null;
+    const p = this.player;
+    return {
+      playerState:       p.debugState,
+      parryActive:       this.parrySystem.isWindowActive,
+      parryRemainingMs:  this.parrySystem.windowRemainingMs,
+      iframeActive:      p.isInvulnerable,
+      iframeRemainingMs: Math.max(0, p._iframeUntil - now),
+      respect:           this.respectMeter.value,
+      waveIndex:         this._waveIndex ?? 0,
+      aliveCount:        this._enemies ? this._enemies.filter((e) => !e.isDead).length : 0,
+    };
+  }
+
   // ─── Spawning ────────────────────────────────────────────────────────────────
 
   _spawnEnemy(x, y, type) {
-    const enemy = new Enemy(this, x, y, type, this.respectMeter, this._onEnemyAttack);
+    const enemy = new Enemy(this, x, y, type, this.respectMeter, this._onEnemyAttack, this._spawnCount++);
     this._enemies.push(enemy);
     this._hurtboxGroup.add(enemy.hurtbox);
     return enemy;
