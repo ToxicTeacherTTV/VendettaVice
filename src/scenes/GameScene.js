@@ -74,8 +74,18 @@ export default class GameScene extends Phaser.Scene {
     this._spawnWave(this._waveIndex);
 
     // ── Camera ─────────────────────────────────────────────────────────────────
+    // Extend physics world to match the full street width so sprites don't
+    // collide with an invisible wall at the default 960px boundary.
+    this.physics.world.setBounds(0, 0, width * 2, height);
     this.cameras.main.setBounds(0, 0, width * 2, height);
     this.cameras.main.startFollow(this.player.sprite, true, 0.1, 0.1);
+
+    // Launch overlay scenes now that GameScene is fully initialised.
+    // Launching from here (rather than TitleScene) guarantees GameScene.create()
+    // has run before UIScene / DebugScene try to access this.scene.get(SCENE.GAME).
+    // scene.launch() is a no-op if the scene is already active (e.g. on restart).
+    this.scene.launch(SCENE.UI);
+    this.scene.launch(SCENE.DEBUG);
 
     // Sync UI to initial values
     this.events.emit('respectChanged', this.respectMeter.value);
