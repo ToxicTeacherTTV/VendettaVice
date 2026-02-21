@@ -92,7 +92,7 @@ export default class UIScene extends Phaser.Scene {
       { key: '← → ↑ ↓', action: 'Move' },
       { key: 'Z',        action: 'Punch' },
       { key: 'X',        action: 'Kick' },
-      { key: 'C',        action: 'Block / Parry' },
+      { key: 'C',        action: 'Parry (on yellow)' },
       { key: 'V',        action: 'Oven grab' },
     ];
 
