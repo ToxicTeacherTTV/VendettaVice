@@ -27,12 +27,12 @@ export default class Player {
     this._lastHitId = null;
 
     // Placeholder sprite — replace with spritesheet once art is ready
-    this.sprite = scene.physics.add.image(x, y, '__DEFAULT').setDisplaySize(48, 64);
+    this.sprite = scene.physics.add.image(x, y, 'pixel').setDisplaySize(48, 64);
     this.sprite.setCollideWorldBounds(true);
     this.sprite.setTint(0xff6600); // Tony's signature orange tracksuit
 
     // Separate hitbox — only enabled during the active hit frame of an attack
-    this.hitbox = scene.physics.add.image(x, y, '__DEFAULT').setDisplaySize(40, 40);
+    this.hitbox = scene.physics.add.image(x, y, 'pixel').setDisplaySize(40, 40);
     this.hitbox.setAlpha(0);
     this.hitbox.body.enable = false;
 

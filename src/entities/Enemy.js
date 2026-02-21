@@ -70,7 +70,7 @@ export default class Enemy {
     this._patrolTimer = 0; // first tick will set the real timer
 
     // Placeholder sprite
-    this.sprite = scene.physics.add.image(x, y, '__DEFAULT').setDisplaySize(40, 60);
+    this.sprite = scene.physics.add.image(x, y, 'pixel').setDisplaySize(40, 60);
     this.sprite.setTint(this._baseColor);
     this.sprite.setCollideWorldBounds(true);
 
