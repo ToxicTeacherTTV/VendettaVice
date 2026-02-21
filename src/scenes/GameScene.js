@@ -134,7 +134,13 @@ export default class GameScene extends Phaser.Scene {
       if (result.outcome === 'parried') {
         this.parrySystem.consumeParry();               // visual flash + callbacks
         this.respectMeter.adjust(result.respectDelta); // GAIN_PARRY
-        if (attacker.enterStun) attacker.enterStun(COMBAT.PARRY_STUN_MS);
+        // Counter: deal half the incoming damage back and knock the attacker away
+        attacker.applyDamage(Math.ceil(damage * 0.5), this.respectMeter);
+        if (!attacker.isDead) {
+          const dir = attacker.sprite.x >= target.sprite.x ? 1 : -1;
+          attacker.applyKnockback(dir, COMBAT.ENEMY_KNOCKBACK, COMBAT.KNOCKBACK_VY, COMBAT.KNOCKBACK_DURATION_MS);
+          attacker.enterStun(COMBAT.PARRY_STUN_MS);
+        }
         return;
       }
 
