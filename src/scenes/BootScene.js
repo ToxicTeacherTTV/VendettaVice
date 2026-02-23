@@ -1,4 +1,5 @@
 import { SCENE } from '../config/constants.js';
+import { applyOverrides } from '../config/applyTuning.js';
 
 export default class BootScene extends Phaser.Scene {
   constructor() {
@@ -8,6 +9,13 @@ export default class BootScene extends Phaser.Scene {
   preload() {
     // TODO: Load spritesheets, tilesets, audio, fonts
     // Placeholder graphics will be used until real assets are added.
+
+    // Live-tuning override file — dev only.
+    // Loaded via Phaser's asset pipeline so no extra async plumbing is needed.
+    // Missing file is fine: Phaser will just leave the cache key empty.
+    if (import.meta.env.DEV) {
+      this.load.json('tuning', '/tuning.json');
+    }
 
     // Progress bar
     const bar = this.add.graphics();
@@ -40,6 +48,15 @@ export default class BootScene extends Phaser.Scene {
     g.fillRect(0, 0, 1, 1);
     g.generateTexture('pixel', 1, 1);
     g.destroy();
+
+    // Apply any tuning overrides before any game scene reads from constants.
+    if (import.meta.env.DEV) {
+      const overrides = this.cache.json.get('tuning');
+      if (overrides) {
+        applyOverrides(overrides);
+        console.info('[tuning] Overrides applied:', overrides);
+      }
+    }
 
     this.scene.start(SCENE.TITLE);
   }

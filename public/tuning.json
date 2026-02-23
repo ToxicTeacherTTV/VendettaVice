@@ -1,0 +1,42 @@
+{
+  "_note": "Dev-only feel tuning. Edit values here, refresh the browser — no rebuild needed.",
+
+  "PLAYER": {
+    "SPEED":              200,
+    "HEALTH":             100,
+    "PUNCH_DAMAGE":        12,
+    "KICK_DAMAGE":         18,
+    "PARRY_WINDOW_MS":    110,
+    "PARRY_COOLDOWN_MS":  350
+  },
+
+  "COMBAT": {
+    "IFRAME_DURATION_MS":   600,
+    "KNOCKBACK_DURATION_MS": 200,
+    "PLAYER_KNOCKBACK":     300,
+    "ENEMY_KNOCKBACK":      260,
+    "KNOCKBACK_VY":         -60,
+    "HITSTUN_MS":           300,
+    "PARRY_STUN_MS":        800,
+    "TELEGRAPH_MS":         500,
+    "RECOVERY_MS":          300,
+    "ATTACK_COOLDOWN_MS":  1400,
+    "BLOCK_DAMAGE_REDUCTION": 0.5
+  },
+
+  "RESPECT": {
+    "GAIN_PARRY":             6,
+    "GAIN_CLEAN_KO":          4,
+    "GAIN_FAIR_FIGHT":        3,
+    "PENALTY_CHEAP_SHOT":    10,
+    "PENALTY_ENVIRON_KILL":  15
+  },
+
+  "ENEMY_HP": {
+    "TRACKSUIT_GOON":   60,
+    "PASTA_DEALER":     78,
+    "ENFORCER":        125,
+    "EARL_GREY_AGENT":  92,
+    "MINI_BOSS":       200
+  }
+}
