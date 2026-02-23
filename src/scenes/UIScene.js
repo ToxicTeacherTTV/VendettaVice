@@ -10,6 +10,7 @@ export default class UIScene extends Phaser.Scene {
     this._buildHealthBar();
     this._buildRespectBar();
     this._buildMobsterStatus();
+    this._buildControls();
 
     // Listen for game events
     const gameScene = this.scene.get(SCENE.GAME);
@@ -79,5 +80,33 @@ export default class UIScene extends Phaser.Scene {
 
   _showMobstersLeft() {
     this._mobsterText.setText('Old-school: WALKED AWAY').setColor('#ff3300');
+  }
+
+  _buildControls() {
+    const { width, height } = this.scale;
+    const x = width - 12;
+    const style = { fontSize: '12px', fontFamily: 'monospace', color: '#888888' };
+    const keyStyle = { fontSize: '12px', fontFamily: 'monospace', color: '#ffcc00' };
+
+    const lines = [
+      { key: '← → ↑ ↓', action: 'Move' },
+      { key: 'Z',        action: 'Punch' },
+      { key: 'X',        action: 'Kick' },
+      { key: 'C',        action: 'Parry (on yellow)' },
+      { key: 'V',        action: 'Oven grab' },
+    ];
+
+    const lineH = 18;
+    const startY = height - 12 - lines.length * lineH;
+
+    lines.forEach(({ key, action }, i) => {
+      const y = startY + i * lineH;
+      this.add.text(x, y, action, { ...style }).setOrigin(1, 0);
+      this.add.text(x - 90, y, key, { ...keyStyle }).setOrigin(1, 0);
+    });
+
+    this.add.text(x, startY - lineH, 'CONTROLS', {
+      fontSize: '11px', fontFamily: 'monospace', color: '#555555',
+    }).setOrigin(1, 0);
   }
 }

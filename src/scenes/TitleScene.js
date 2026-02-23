@@ -62,7 +62,6 @@ export default class TitleScene extends Phaser.Scene {
 
     this.input.keyboard.on('keydown-ENTER', () => {
       this.scene.start(SCENE.GAME);
-      this.scene.launch(SCENE.UI);
     });
   }
 

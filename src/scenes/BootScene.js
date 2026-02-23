@@ -32,6 +32,15 @@ export default class BootScene extends Phaser.Scene {
   }
 
   create() {
+    // Generate a 1×1 white texture used as the placeholder sprite for all
+    // physics-enabled game objects (Player, Enemy). '__DEFAULT' is an internal
+    // Phaser texture that can render as transparent in 3.80+; 'pixel' is ours.
+    const g = this.make.graphics({ x: 0, y: 0, add: false });
+    g.fillStyle(0xffffff, 1);
+    g.fillRect(0, 0, 1, 1);
+    g.generateTexture('pixel', 1, 1);
+    g.destroy();
+
     this.scene.start(SCENE.TITLE);
   }
 }
