@@ -144,12 +144,6 @@ export default class Player {
   /** Consume HP. Does not handle iframes or knockback — resolveHit does that. */
   applyDamage(amount) {
     if (this.isDead) return;
-
-    // Give parry system first crack at absorbing the hit
-    if (this.parrySystem.checkIncomingAttack(this.scene.time.now, this.respectMeter)) {
-      return; // parried — no damage taken
-    }
-
     this.health = Math.max(0, this.health - amount);
     this.scene.events.emit('healthChanged', this.health);
 
